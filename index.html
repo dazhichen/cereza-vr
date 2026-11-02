@@ -2672,20 +2672,13 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
       if (h && u.aim && !u.walk) { XR.hit = h; XR.ring.position.copy(h.p).add(XR.v.set(0, .06, 0)); XR.ring.visible = true; }
     });
     // sticks and buttons
-    let fw = 0, sd = 0, fast = false;
+    let fw = 0, sd = 0, turn = 0, rfw = 0, fast = false;
     const src = XR.session.inputSources || [];
     for (let i = 0; i < src.length; i++) {
       const s = src[i], gp = s.gamepad; if (!gp) continue;
       const axX = gp.axes.length > 3 ? gp.axes[2] : (gp.axes[0] || 0), axY = gp.axes.length > 3 ? gp.axes[3] : (gp.axes[1] || 0);
       if (s.handedness === 'left') { if (Math.hypot(axX, axY) > .15) { sd += axX; fw -= axY; } }   // walk and sidestep
-      else if (s.handedness === 'right') {
-        if (Math.abs(axY) > .2 && Math.abs(axX) < .5) fw -= axY;   // forward or back walks
-        if (Math.abs(axX) > .7 && !XR.turned) {   // sideways: a snap turn about the head
-          const a = -Math.sign(axX) * Math.PI / 6, hh = headWorld();
-          XR.rig.position.sub(hh).applyAxisAngle(new THREE.Vector3(0, 1, 0), a).add(hh); XR.rig.rotation.y += a; XR.turned = true;
-          XR.rig.updateMatrixWorld(true);
-        } else if (Math.abs(axX) < .3) XR.turned = false;
-      }
+      else if (s.handedness === 'right') { turn = axX; rfw = -axY; }
       const b = gp.buttons, key = s.handedness;
       if (b[1] && b[1].pressed) fast = true;   // a grip
       const press = (n, fn) => { const on = !!(b[n] && b[n].pressed), was = XR.btn[key + n]; XR.btn[key + n] = on; if (on && !was) fn(); };
@@ -2698,6 +2691,16 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
       });
       press(5, () => { const q = XR.session; setTimeout(() => { if (XR && XR.session === q) q.end().catch(() => {}); }, 0); });   // B or Y: leave
     }
+    // the right stick, by La Calle's rule: pushed more up-down than sideways it walks (when the left stick is idle), else it turns
+    const rup = Math.abs(rfw) > Math.abs(turn);
+    if (!fw && !sd && rup && Math.abs(rfw) >= .15) fw = rfw;
+    if (Math.abs(turn) > .7 && !rup) {
+      if (!XR.turned) {   // a snap turn about the head
+        const a = -Math.sign(turn) * Math.PI / 6, hh = headWorld();
+        XR.rig.position.sub(hh).applyAxisAngle(new THREE.Vector3(0, 1, 0), a).add(hh); XR.rig.rotation.y += a; XR.turned = true;
+        XR.rig.updateMatrixWorld(true);
+      }
+    } else if (Math.abs(turn) < .3) XR.turned = false;
     if (held && !fw && !sd) fw = 1;   // a held trigger walks ahead, as in La Calle
     const mag = Math.hypot(fw, sd);
     if (mag) {   // walk where you look, at La Calle's pace
