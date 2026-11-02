@@ -2522,12 +2522,13 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
   const h0 = (location.hash || '').toLowerCase();
   if (h0.indexOf('walk') >= 0) setView('walk'); else if (h0.indexOf('mass') >= 0) setView('mass'); else if (!h0) playIntro();
   if (!intro.on && window.LC_VIEW === 'plan') nudge();   // no flight (less motion asked, or a link to the Plan): prompt at once
-  // ---- VR: in a headset's browser (Meta Quest), Walk can be entered as immersive VR. The model is in feet and the
-  // headset reports meters, so the headset sits in a rig scaled 3.28 to one. Walking follows La Calle: the left stick
-  // walks where you look, and so does holding either trigger (or a pinch); holding a grip goes faster. Here the right
-  // stick also walks when pushed forward or back, and turns in 30 degree steps when pushed sideways. A quick pull of a
-  // trigger jumps to the spot its beam meets on a floor, a stair or the ground. B or Y changes floors; A or X goes back
-  // to the street. The sun never moves, so the shadow map is drawn once.
+  // ---- VR: in a headset's browser (Meta Quest), the house can be walked full size as immersive VR. The model is in feet and
+  // the headset reports meters, so the headset sits in a rig scaled 3.28 to one. The controls are the La Calle model's, the
+  // same in both (2 Nov 2026, the owner: "cereza and la calle should match"): either stick walks where you look (the right
+  // one forward and back; pushed sideways it turns 30 degrees), a held trigger or pinch walks ahead, a grip goes faster, a
+  // quick pull of a trigger jumps to the spot its beam meets on a floor, a stair or the ground, A or X takes you to the
+  // other floor and B or Y leaves. You start where the Walk view stands, facing its way, with a card of the controls in
+  // front of you for 30 seconds or until you have moved 12 ft. The sun never moves, so the shadow map is drawn once.
   const WALK = 4.5, FAST = 11, HOLD = 300;   // feet a second, as in La Calle; a pull held past 300 ms walks instead of jumping
   const vrBtn = document.getElementById('v-vr');
   if (vrBtn && navigator.xr && navigator.xr.isSessionSupported) {
@@ -2560,21 +2561,41 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
     const ground = new THREE.Mesh(g, mat); ground.position.set((GX[0] + GX[1]) / 2, 0, (GZ[0] + GZ[1]) / 2); ground.userData.lv = 1; ground.updateMatrixWorld(); list.push(ground);
     return list;
   }
-  function signTexture() {   // the controls, on a card that waits by the start
+  function card(title) {   // the controls, on a card in front of you (the same card as La Calle's), 1 m wide, in meters
     const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
-    const g = c.getContext('2d');
-    g.fillStyle = 'rgba(244,243,236,.94)'; g.fillRect(0, 0, 1024, 512);
-    g.strokeStyle = '#1B2A33'; g.lineWidth = 6; g.strokeRect(3, 3, 1018, 506);
-    g.fillStyle = '#8C3A2E'; g.font = '700 46px sans-serif'; g.fillText('784 Cereza Drive, in VR', 50, 84);
-    g.font = '36px sans-serif';
+    const g = c.getContext('2d'), font = (w, s) => w + ' ' + s + 'px system-ui, -apple-system, "Segoe UI", sans-serif';
+    g.fillStyle = 'rgba(24,26,28,.88)'; g.fillRect(0, 0, 1024, 512);
+    g.fillStyle = '#E9B35A'; g.font = font(700, 44); g.fillText(title, 56, 84);
     [['Walk', 'either stick, or hold a trigger'], ['Faster', 'hold a grip as well'], ['Turn', 'right stick, left or right'],
-     ['Jump', 'point, then tap a trigger'], ['B or Y', 'change floors'], ['A or X', 'back to the street']]
-      .forEach(([k, v], i) => {
-        const y = 152 + i * 62;
-        g.fillStyle = '#1B2A33'; g.font = '700 36px sans-serif'; g.fillText(k, 50, y);
-        g.font = '36px sans-serif'; g.fillText(v, 230, y);
+     ['Jump', 'point, then tap a trigger'], ['A or X', 'the other floor'], ['B or Y', 'leave VR']]
+      .forEach(([k, v], i) => { g.fillStyle = '#f4f1ea'; g.font = font(700, 38); g.fillText(k, 56, 158 + i * 60); g.font = font(400, 38); g.fillText(v, 250, 158 + i * 60); });
+    const tx = new THREE.CanvasTexture(c); tx.encoding = THREE.sRGBEncoding;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, .5),
+      new THREE.MeshBasicMaterial({map: tx, transparent: true, depthTest: false, depthWrite: false, fog: false, toneMapped: false}));
+    m.renderOrder = 1000; m.frustumCulled = false;
+    return m;
+  }
+  let CTL = null;
+  function pointers() {   // the two controllers, each with a beam and a small handle; made once, before the first session starts
+    if (CTL) return CTL;
+    const beamMat = new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: .55, toneMapped: false});
+    CTL = [0, 1].map(i => {
+      const c = renderer.xr.getController(i), grip = renderer.xr.getControllerGrip(i);
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(.003, .003, 1, 6).rotateX(-Math.PI / 2).translate(0, 0, -.5), beamMat);
+      beam.scale.z = 6; beam.visible = false; c.add(beam);
+      grip.add(new THREE.Mesh(new THREE.BoxGeometry(.035, .03, .11), new THREE.MeshStandardMaterial({color: 0x24272a, roughness: .5})));
+      c.userData = {aim: false, walk: false, t0: 0, beam: beam, grip: grip};
+      c.addEventListener('connected', e => { beam.visible = !!e.data && e.data.targetRayMode === 'tracked-pointer'; });
+      c.addEventListener('disconnected', () => { beam.visible = false; c.userData.aim = c.userData.walk = false; });
+      c.addEventListener('selectstart', () => { Object.assign(c.userData, {aim: true, walk: false, t0: performance.now()}); });
+      c.addEventListener('selectend', () => {   // a quick pull jumps; a held one was a walk
+        const u = c.userData, quick = u.aim && !u.walk && performance.now() - u.t0 <= HOLD;
+        u.aim = u.walk = false;
+        if (quick && XR) { XR.rig.updateMatrixWorld(true); const h = aimAt(c); if (h) jumpTo(h.p, h.lv); }
       });
-    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+      return c;
+    });
+    return CTL;
   }
   async function startVR(session) {
     const rig = new THREE.Group(), head = new THREE.PerspectiveCamera(70, 1, .05, 1200);
@@ -2582,45 +2603,37 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
     const targets = jumpTargets();
     const ring = new THREE.Mesh(new THREE.RingGeometry(.95, 1.35, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: .85, toneMapped: false, depthTest: false}));
     ring.renderOrder = 10; ring.visible = false; scene.add(ring);
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(6, 3), new THREE.MeshBasicMaterial({map: signTexture(), toneMapped: false, transparent: true}));
-    scene.add(sign);
-    const beamMat = new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: .55, toneMapped: false});
-    const ctl = [0, 1].map(i => {
-      const c = renderer.xr.getController(i), beam = new THREE.Mesh(new THREE.CylinderGeometry(.003, .003, 1, 6).rotateX(-Math.PI / 2).translate(0, 0, -.5), beamMat);
-      beam.scale.z = 6; beam.visible = false; c.add(beam); rig.add(c);
-      const grip = renderer.xr.getControllerGrip(i);
-      grip.add(new THREE.Mesh(new THREE.BoxGeometry(.035, .03, .11), new THREE.MeshStandardMaterial({color: 0x24272a, roughness: .5}))); rig.add(grip);
-      c.userData = {aim: false, walk: false, t0: 0, src: null, beam: beam};
-      c.addEventListener('connected', e => { c.userData.src = e.data; beam.visible = !!e.data && e.data.targetRayMode === 'tracked-pointer'; });
-      c.addEventListener('disconnected', () => { c.userData.src = null; beam.visible = false; c.userData.aim = c.userData.walk = false; });
-      c.addEventListener('selectstart', () => { Object.assign(c.userData, {aim: true, walk: false, t0: performance.now()}); });
-      c.addEventListener('selectend', () => {   // a quick pull jumps; a held one was a walk
-        const u = c.userData, quick = u.aim && !u.walk && performance.now() - u.t0 <= HOLD;
-        u.aim = u.walk = false;
-        if (quick && XR) { const h = aimAt(c); if (h) jumpTo(h.p, h.lv); }
-      });
-      return c;
-    });
-    XR = {session: session, rig: rig, head: head, targets: targets, ring: ring, sign: sign, ctl: ctl, hit: null, lv: 1, turned: false, btn: {}, last: 0, signT: 0,
-      ray: new THREE.Raycaster(), m: new THREE.Matrix4(), v: new THREE.Vector3()};
+    const ctl = pointers(); ctl.forEach(c => { rig.add(c); rig.add(c.userData.grip); });
+    const sign = card('784 Cereza Drive, in VR'); sign.visible = false; rig.add(sign);   // placed in the first frame
+    const lv = vis.up ? 2 : 1;
+    XR = {session: session, rig: rig, head: head, targets: targets, ring: ring, sign: sign, ctl: ctl, hit: null, lv: lv, turned: false, btn: {},
+      last: 0, t0: 0, first: true, moved: 0, ray: new THREE.Raycaster(), m: new THREE.Matrix4(), v: new THREE.Vector3()};
     show.planes = false; build();   // no height-limit planes around you in VR
     renderer.xr.enabled = true; renderer.xr.setReferenceSpaceType('local-floor');
     try { await renderer.xr.setSession(session); }
     catch (e) { vrNote('VR could not start: ' + ((e && e.message) || e)); endVR(); return; }
     renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;
-    toStart();
+    rig.position.set(W.x, lv === 2 ? LV.FF2 + .02 : floorAt(W.x, W.z), W.z); rig.rotation.set(0, W.yaw, 0);   // squared up in the first frame
     session.addEventListener('end', endVR);
     renderer.setAnimationLoop(xrFrame);
   }
   function headWorld() { const c = renderer.xr.getCamera(XR.head); return new THREE.Vector3().setFromMatrixPosition(c.matrixWorld); }
+  function headYaw() {   // which way the head faces, as Walk counts it (0 looks toward -z)
+    const c = renderer.xr.getCamera(XR.head), f = new THREE.Vector3(0, 0, -1).transformDirection(c.matrixWorld);
+    return Math.atan2(-f.x, -f.z);
+  }
   function placeHead(x, z, y, lv) {   // move the rig so the head lands over (x, z) and the feet on floor height y
     const h = headWorld();
     XR.rig.position.x += x - h.x; XR.rig.position.z += z - h.z; XR.rig.position.y = y; XR.lv = lv;
   }
-  function toStart() {
-    XR.rig.position.set(W0.x, floorAt(W0.x, W0.z), W0.z); XR.rig.rotation.set(0, W0.yaw, 0); XR.lv = 1;
-    const fx = -Math.sin(W0.yaw), fz = -Math.cos(W0.yaw), rx = Math.cos(W0.yaw), rz = -Math.sin(W0.yaw);   // off to the left, turned toward you
-    XR.sign.position.set(W0.x + fx * 6.5 - rx * 3.4, 5.0, W0.z + fz * 6.5 - rz * 3.4); XR.sign.rotation.set(0, W0.yaw + Math.atan2(3.4, 6.5), 0); XR.sign.visible = true; XR.signT = 0;
+  function arrive(t) {   // the first frame: your head where the Walk view stands, facing its way, and the card ahead of you
+    XR.first = false; XR.t0 = t;
+    const a = W.yaw - headYaw(), hh = headWorld();
+    XR.rig.position.sub(hh).applyAxisAngle(new THREE.Vector3(0, 1, 0), a).add(hh); XR.rig.rotation.y += a; XR.rig.updateMatrixWorld(true);
+    placeHead(W.x, W.z, XR.lv === 2 ? LV.FF2 + .02 : floorAt(W.x, W.z), XR.lv); XR.rig.updateMatrixWorld(true);
+    const h = headWorld(), k = 1.6 * 3.28084;   // 1.6 m ahead and a quarter meter below the eyes, turned to face you
+    const p = XR.rig.worldToLocal(new THREE.Vector3(h.x - Math.sin(W.yaw) * k, h.y - .25 * 3.28084, h.z - Math.cos(W.yaw) * k));
+    XR.sign.position.copy(p); XR.sign.rotation.set(0, W.yaw - XR.rig.rotation.y, 0); XR.sign.visible = true;
   }
   function floorFor(x, z, lv) {   // floor height under a point on the level the walker is on
     if (lv === 2) {
@@ -2630,7 +2643,10 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
     }
     return floorAt(x, z);
   }
-  function jumpTo(p, lv) { placeHead(p.x, p.z, lv === 2 ? LV.FF2 + .02 : (p.y < .5 ? floorAt(p.x, p.z) : p.y), lv); XR.sign.visible = false; }
+  function jumpTo(p, lv) {
+    const h = headWorld(); XR.moved += Math.hypot(p.x - h.x, p.z - h.z);
+    placeHead(p.x, p.z, lv === 2 ? LV.FF2 + .02 : (p.y < .5 ? floorAt(p.x, p.z) : p.y), lv);
+  }
   function aimAt(c) {   // the first floor, tread or patch of ground along a pointer's ray, and how far off it is (ft)
     const R = XR.ray; XR.m.identity().extractRotation(c.matrixWorld);
     R.ray.origin.setFromMatrixPosition(c.matrixWorld); R.ray.direction.set(0, 0, -1).applyMatrix4(XR.m).normalize(); R.far = 90;
@@ -2641,6 +2657,7 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
     if (!XR) return;
     const dt = XR.last ? Math.min(.05, (t - XR.last) / 1000) : 1 / 72; XR.last = t;
     XR.rig.updateMatrixWorld(true);
+    if (XR.first) arrive(t);
     // pointers: each beam stops where it meets a floor, a tread or the ground, so you can see where a quick pull lands;
     // the ring marks that spot while the trigger is down, and a pull held past HOLD walks instead
     const now = performance.now(); let held = false;
@@ -2663,7 +2680,7 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
       if (s.handedness === 'left') { if (Math.hypot(axX, axY) > .15) { sd += axX; fw -= axY; } }   // walk and sidestep
       else if (s.handedness === 'right') {
         if (Math.abs(axY) > .2 && Math.abs(axX) < .5) fw -= axY;   // forward or back walks
-        if (Math.abs(axX) > .65 && !XR.turned) {   // sideways: a snap turn about the head
+        if (Math.abs(axX) > .7 && !XR.turned) {   // sideways: a snap turn about the head
           const a = -Math.sign(axX) * Math.PI / 6, hh = headWorld();
           XR.rig.position.sub(hh).applyAxisAngle(new THREE.Vector3(0, 1, 0), a).add(hh); XR.rig.rotation.y += a; XR.turned = true;
           XR.rig.updateMatrixWorld(true);
@@ -2672,36 +2689,40 @@ const CZ = {"center":[33.3,-50.0],"lot":[[66.63,-0.0],[66.63,-115.03],[0.0,-115.
       const b = gp.buttons, key = s.handedness;
       if (b[1] && b[1].pressed) fast = true;   // a grip
       const press = (n, fn) => { const on = !!(b[n] && b[n].pressed), was = XR.btn[key + n]; XR.btn[key + n] = on; if (on && !was) fn(); };
-      press(4, () => toStart());   // A or X
-      press(5, () => {   // B or Y: up or down a floor, where you stand, or at the stair when there is no floor there
+      press(4, () => {   // A or X: the other floor, where you stand, or the upstairs hall by the stair when there is no floor above
         const hh = headWorld();
         if (XR.lv === 1) {
           const y2 = floorFor(hh.x, hh.z, 2);
-          if (y2 > 5) placeHead(hh.x, hh.z, y2, 2); else placeHead(31.0 + 6.08 - cx, -(22.0 + 20) - cy, LV.FF2 + .02, 2);   // the upstairs hall by the stair
+          if (y2 > 5) placeHead(hh.x, hh.z, y2, 2); else placeHead(31.0 + 6.08 - cx, -(22.0 + 20) - cy, LV.FF2 + .02, 2);
         } else placeHead(hh.x, hh.z, floorAt(hh.x, hh.z), 1);
       });
+      press(5, () => { const q = XR.session; setTimeout(() => { if (XR && XR.session === q) q.end().catch(() => {}); }, 0); });   // B or Y: leave
     }
-    if (held && !fw && !sd) fw = 1;   // a held trigger walks forward, as in La Calle
+    if (held && !fw && !sd) fw = 1;   // a held trigger walks ahead, as in La Calle
     const mag = Math.hypot(fw, sd);
     if (mag) {   // walk where you look, at La Calle's pace
       const c = renderer.xr.getCamera(XR.head), f = new THREE.Vector3(0, 0, -1).transformDirection(c.matrixWorld); f.y = 0; f.normalize();
-      const r = new THREE.Vector3(-f.z, 0, f.x), k = (fast ? FAST : WALK) * Math.min(1, mag) * dt / mag;
-      XR.rig.position.addScaledVector(f, fw * k).addScaledVector(r, sd * k);
-      XR.rig.updateMatrixWorld(true); const hh = headWorld(); XR.rig.position.y = floorFor(hh.x, hh.z, XR.lv); XR.sign.visible = false;
+      const v = (fast ? FAST : WALK) * Math.min(1, mag) * dt, r = new THREE.Vector3(-f.z, 0, f.x), k = v / mag;
+      XR.rig.position.addScaledVector(f, fw * k).addScaledVector(r, sd * k); XR.moved += v;
+      XR.rig.updateMatrixWorld(true); const hh = headWorld(); XR.rig.position.y = floorFor(hh.x, hh.z, XR.lv);
     }
-    if (XR.sign.visible) { XR.signT += dt; if (XR.signT > 45) XR.sign.visible = false; }
+    if (XR.sign.visible && (t - XR.t0 > 30000 || XR.moved > 12)) XR.sign.visible = false;
     renderer.render(scene, XR.head);
   }
   function endVR() {
     if (!XR) return;
     const x = XR;
     renderer.setAnimationLoop(null);
-    const p = new THREE.Vector3().setFromMatrixPosition(x.head.matrixWorld);
-    scene.remove(x.rig); scene.remove(x.ring); scene.remove(x.sign);
+    const p = new THREE.Vector3().setFromMatrixPosition(x.head.matrixWorld), f = new THREE.Vector3(0, 0, -1).transformDirection(x.head.matrixWorld);
+    scene.remove(x.rig); scene.remove(x.ring);
+    x.sign.material.map.dispose(); x.sign.material.dispose(); x.sign.geometry.dispose();
+    x.ctl.forEach(c => { c.userData.aim = c.userData.walk = false; });
     XR = null;
     renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = true; renderer.shadowMap.needsUpdate = true;
     show.planes = true;
-    if (isFinite(p.x)) { W.x = clamp(p.x, GX[0], GX[1]); W.z = clamp(p.z, GZ[0], GZ[1]); }
+    if (isFinite(p.x)) { W.x = clamp(p.x, GX[0], GX[1]); W.z = clamp(p.z, GZ[0], GZ[1]); }   // Walk picks up where you were
+    if (isFinite(f.x) && Math.hypot(f.x, f.z) > .01) W.yaw = Math.atan2(-f.x, -f.z);
+    W.pitch = 0;
     vis.up = x.lv === 2; const up = document.getElementById('m-up'); if (up) up.setAttribute('aria-pressed', vis.up ? 'true' : 'false');
     setView('walk');
   }
