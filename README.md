@@ -1,5 +1,7 @@
 # Cereza 3D model, headset version
 
+**Confidential.** Shared for viewing only; not licensed for copying, reuse or redistribution. The page opens only at its own address.
+
 A furnished 3D model of the new house at 784 Cereza Drive, Palo Alto (Tektive Design, design-development set IR2, 27 July 2026), with an immersive VR mode for Meta Quest.
 
 **Open it:** https://dazhichen.github.io/cereza-vr/ in the Meta Quest Browser, then tap **VR**. On a computer the same page shows the plan, the 3D model and the eye-level walk.
